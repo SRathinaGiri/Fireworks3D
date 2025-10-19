@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive 3D Diwali Fireworks</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        #canvas-container { border: 1px solid #333; }
+        #controls { position: fixed; top: 10px; left: 10px; padding: 10px; background-color: rgba(0, 0, 0, 0.6); border-radius: 8px; z-index: 10; min-width: 300px; max-height: 90vh; overflow-y: auto; }
+        .control-group { margin-bottom: 12px; }
+        label, input, button { font-size: 14px; color: #fff; vertical-align: middle; }
+        input[type="text"], input[type="number"], button { background-color: #333; border: 1px solid #555; border-radius: 4px; padding: 5px; margin-left: 5px; }
+        input[type="number"] { width: 60px; }
+        input[type="range"] { width: 120px; margin: 0 5px; }
+        .slider-label { display: inline-block; width: 110px; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button:hover:not(:disabled) { background-color: #555; }
+    </style>
+</head>
+<body>
+    
+    <div id="canvas-container"><canvas id="fireworksCanvas"></canvas></div>
+
+    <div id="controls">
+        <div class="control-group">
+            <label for="diwaliMessage">Message:</label>
+            <input type="text" id="diwaliMessage" value="Happy Diwali!">
+        </div>
+        <div class="control-group">
+             <label><input type="checkbox" id="useCustomFont"> Use Custom Font (FavLang.json)</label>
+        </div>
+        <div class="control-group">
+            <label>Canvas:</label>
+            <input type="number" id="canvasWidth" value="500"> x <input type="number" id="canvasHeight" value="500">
+            <button id="updateCanvasBtn">Update</button>
+        </div>
+        <div class="control-group"><label class="slider-label" for="maxFireworks">Max Fireworks:</label><input type="range" id="maxFireworks" min="5" max="50" value="20"> <span id="maxFireworksValue">20</span></div>
+        <hr>
+        <div class="control-group"><label class="slider-label" for="timeScale">Time Scale:</label><input type="range" id="timeScale" min="0.1" max="1.0" value="1.0" step="0.05"> <span id="timeScaleValue">1.0</span></div>
+        <div class="control-group"><label class="slider-label" for="blurAmount">Blur Control:</label><input type="range" id="blurAmount" min="0.0" max="1.0" value="0.5" step="0.1"> <span id="blurAmountValue">0.5</span></div>
+        <hr>
+        <div class="control-group"><label><input type="checkbox" id="stereoToggle"> Enable Stereo 3D</label><button id="swapEyesBtn" disabled>Swap Eyes</button></div>
+        <div class="control-group"><label class="slider-label" for="fov">FoV:</label><input type="range" id="fov" min="30" max="120" value="75"> <span id="fovValue">75</span></div>
+        <div class="control-group"><label class="slider-label" for="eyeDist">Eye Distance:</label><input type="range" id="eyeDist" min="0" max="2" value="0.5" step="0.01"> <span id="eyeDistValue">0.5</span></div>
+        <div class="control-group"><label class="slider-label" for="focalDist">Focal Distance:</label><input type="range" id="focalDist" min="10" max="100" value="50"> <span id="focalDistValue">50</span></div>
+        <hr>
+        <div class="control-group"><label><input type="checkbox" id="blendingToggle" checked> Use Additive Blending (Glow)</label></div>
+        <div class="control-group"><button id="startRecordBtn">Start Recording</button><button id="stopRecordBtn" disabled>Stop Recording</button></div>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ====================================================================
+        // 1. SETUP & CONFIGURATION
+        // ====================================================================
+        let VIEW_WIDTH = 500, VIEW_HEIGHT = 500;
+        const gravity = new THREE.Vector3(0, -0.02, 0);
+        const rand = (min, max) => min + Math.random() * (max - min);
+
+        const scene = new THREE.Scene();
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 2.0);
+        directionalLight.position.set(5, 15, 20);
+        scene.add(directionalLight);
+
+        const camera = new THREE.PerspectiveCamera(75, VIEW_WIDTH / VIEW_HEIGHT, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('fireworksCanvas'), antialias: true, preserveDrawingBuffer: true });
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 0.8;
+        
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; controls.dampingFactor = 0.05;
+        controls.minDistance = 30; controls.maxDistance = 150;
+        controls.maxPolarAngle = Math.PI / 1.8;
+
+        const stereoCamera = new THREE.StereoCamera();
+        camera.position.set(0, 10, 80);
+        controls.target.set(0, 20, 0);
+
+        const cubeTextureLoader = new THREE.CubeTextureLoader();
+        const environmentMap = cubeTextureLoader.load([
+            'https://threejs.org/examples/textures/cube/Bridge2/px.jpg', 'https://threejs.org/examples/textures/cube/Bridge2/nx.jpg',
+            'https://threejs.org/examples/textures/cube/Bridge2/py.jpg', 'https://threejs.org/examples/textures/cube/Bridge2/ny.jpg',
+            'https://threejs.org/examples/textures/cube/Bridge2/pz.jpg', 'https://threejs.org/examples/textures/cube/Bridge2/nz.jpg'
+        ]);
+        scene.environment = environmentMap;
+        scene.background = new THREE.Color(0x000000);
+
+        function createParticleTexture(type) { const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 128; const context = canvas.getContext('2d'); const gradient = context.createRadialGradient(64, 64, 0, 64, 64, 64); if (type === 'soft') { gradient.addColorStop(0, 'rgba(255,255,255,1)'); gradient.addColorStop(0.2, 'rgba(255,255,255,0.8)'); gradient.addColorStop(1, 'rgba(255,255,255,0)'); } else { gradient.addColorStop(0.2, 'rgba(255,255,255,1)'); gradient.addColorStop(0.5, 'rgba(255,255,255,0.5)'); gradient.addColorStop(1, 'rgba(255,255,255,0)'); } context.fillStyle = gradient; context.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(canvas); }
+        const crispTexture = createParticleTexture('crisp');
+        const softTexture = createParticleTexture('soft');
+        
+        const vertexShader = ` attribute float aSize; attribute vec3 aColor; varying vec3 vColor; void main() { vColor = aColor; vec4 mvPosition = modelViewMatrix * vec4(position, 1.0); gl_PointSize = aSize * (300.0 / -mvPosition.z); gl_Position = projectionMatrix * mvPosition; } `;
+        const fragmentShader = ` uniform sampler2D pointTexture; varying vec3 vColor; void main() { gl_FragColor = vec4(vColor, 1.0) * texture2D(pointTexture, gl_PointCoord); } `;
+
+        let isStereoEnabled = false, swapEyes = false, allEffects = [], maxFireworks = 20, messageShown = false, 
+            textMesh = null, timeScale = 1.0, blurAmount = 0.5;
+
+        // ====================================================================
+        // 2. FIREWORK & EFFECT CLASSES (No changes)
+        // ====================================================================
+        class Particle { constructor(options) { this.position = options.position; this.velocity = options.velocity; this.color = options.color; this.size = options.size; this.lifetime = options.lifetime; this.age = 0; this.emitsTrail = options.emitsTrail || false; } update() { this.age += timeScale; this.velocity.add(gravity.clone().multiplyScalar(timeScale)); this.position.add(this.velocity.clone().multiplyScalar(timeScale)); return this.age < this.lifetime; } }
+        class ParticleSystem { constructor(texture, maxParticles) { this.particles = []; this.maxParticles = maxParticles; this.fadeIn = false; this.geometry = new THREE.BufferGeometry(); const positions = new Float32Array(maxParticles * 3); const colors = new Float32Array(maxParticles * 3); const sizes = new Float32Array(maxParticles); this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3)); this.geometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3)); this.geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1)); const blendingToggle = document.getElementById('blendingToggle'); this.material = new THREE.ShaderMaterial({ uniforms: { pointTexture: { value: texture } }, vertexShader, fragmentShader, blending: blendingToggle.checked ? THREE.AdditiveBlending : THREE.NormalBlending, depthWrite: false, transparent: true }); this.points = new THREE.Points(this.geometry, this.material); scene.add(this.points); this.isDead = false; } add(particle) { if (this.particles.length < this.maxParticles) this.particles.push(particle); } update() { this.particles = this.particles.filter(p => p.update()); const liveCount = this.particles.length; if (liveCount === 0) { if (!this.isDead) { this.isDead = true; scene.remove(this.points); this.geometry.dispose(); this.material.dispose(); } return; } const positions = this.geometry.attributes.position.array; const colors = this.geometry.attributes.aColor.array; const sizes = this.geometry.attributes.aSize.array; this.particles.forEach((p, i) => { p.position.toArray(positions, i * 3); const lifeRatio = 1.0 - (p.age / p.lifetime); let alpha = lifeRatio; if (this.fadeIn) { alpha = lifeRatio < 0.5 ? lifeRatio * 2 : (1.0 - lifeRatio) * 2; } let fadedColor = p.color.clone(); if (p.emitsTrail) { const startColor = new THREE.Color(1, 0.8, 0.4); const endColor = new THREE.Color(0.8, 0.2, 0.0); fadedColor.copy(startColor).lerp(endColor, 1 - lifeRatio); } fadedColor.multiplyScalar(alpha); fadedColor.toArray(colors, i * 3); sizes[i] = p.size * alpha; }); this.geometry.setDrawRange(0, liveCount); this.geometry.attributes.position.needsUpdate = true; this.geometry.attributes.aColor.needsUpdate = true; this.geometry.attributes.aSize.needsUpdate = true; } }
+        class BaseRocket { constructor() { const startPos = new THREE.Vector3(rand(-50, 50), -40, rand(-50, 50)); this.targetY = rand(15, 65); const distance = this.targetY - startPos.y; const requiredVy = Math.sqrt(2 * Math.abs(gravity.y) * distance); const velocity = new THREE.Vector3(rand(-0.4, 0.4), requiredVy * rand(1.0, 1.1), rand(-0.4, 0.4)); this.rocket = new Particle({position: startPos, velocity, color: new THREE.Color(1,1,1), size: 1, lifetime: 1000}); this.tail = new ParticleSystem(softTexture, 300); this.exploded = false; this.isDead = false; } updateRocket() { if (!this.exploded) { this.rocket.update(); this.tail.add(new Particle({ position: this.rocket.position.clone(), velocity: new THREE.Vector3(0,0,0), color: new THREE.Color(0.8, 0.8, 0.8), size: 1.5, lifetime: rand(20, 40) })); if (this.rocket.position.y >= this.targetY && this.rocket.velocity.y > 0) { this.exploded = true; this.explode(); } } } }
+        class RocketBurst extends BaseRocket { constructor() { super(); this.sharpExplosion = null; this.softExplosion = null; } explode() { this.sharpExplosion = new ParticleSystem(crispTexture, 150); this.softExplosion = new ParticleSystem(softTexture, 100); this.softExplosion.fadeIn = true; const c = new THREE.Color().setHSL(Math.random(), 1, 0.7); for (let i = 0; i < 120; i++) { let s = rand(0.8, 1.5), l = rand(40, 60); if (Math.random() < 0.1) { s *= 1.8; l *= 1.2; } const v = new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(s); this.sharpExplosion.add(new Particle({ position: this.rocket.position.clone(), velocity: v, color: c, size: rand(4, 7), lifetime: l})); } for (let i = 0; i < 60 * blurAmount; i++) { const v = new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(0.2, 0.7)); this.softExplosion.add(new Particle({ position: this.rocket.position.clone(), velocity: v, color: c, size: rand(7, 10), lifetime: rand(80, 120)})); } } update() { this.updateRocket(); this.tail.update(); if(this.sharpExplosion) this.sharpExplosion.update(); if(this.softExplosion) this.softExplosion.update(); const sharpDead = !this.sharpExplosion || this.sharpExplosion.isDead; const softDead = !this.softExplosion || this.softExplosion.isDead; if(this.exploded && this.tail.isDead && sharpDead && softDead) this.isDead = true; } }
+        class MultiColorBurst extends BaseRocket { constructor() { super(); this.explosion = null; } explode() { this.explosion = new ParticleSystem(crispTexture, 300); for (let i = 0; i < 250; i++) { const c = new THREE.Color().setHSL(Math.random(), 1, 0.7); let s = rand(0.5, 1.2), l = rand(70, 100); if (Math.random() < 0.1) { s *= 1.8; l *= 1.2; } const v = new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(s); this.explosion.add(new Particle({ position: this.rocket.position.clone(), velocity: v, color: c, size: rand(4, 8), lifetime: l})); } } update() { this.updateRocket(); this.tail.update(); if (this.explosion) this.explosion.update(); if (this.exploded && this.tail.isDead && (!this.explosion || this.explosion.isDead)) this.isDead = true; } }
+        class RingBurst extends BaseRocket { constructor() { super(); this.rings = []; } explode() { const numRings = Math.floor(rand(1, 5)); const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(rand(0, Math.PI), rand(0, Math.PI), rand(0, Math.PI))); const maxSpeed = rand(1.0, 1.2); for (let i = 0; i < numRings; i++) { const ringSys = new ParticleSystem(crispTexture, 200); const c = new THREE.Color().setHSL(Math.random(), 1, 0.6); const speed = maxSpeed * (1 - (i / numRings)) * rand(0.9, 1.1); const numP = 150 - (i * 25); for (let j = 0; j < numP; j++) { const angle = (j / numP) * Math.PI * 2; const v = new THREE.Vector3(Math.cos(angle), Math.sin(angle), rand(-0.1, 0.1)).normalize().multiplyScalar(speed); v.applyQuaternion(rot); ringSys.add(new Particle({ position: this.rocket.position.clone(), velocity: v, color: c, size: rand(4, 6), lifetime: rand(80, 100)})); } this.rings.push(ringSys); } } update() { this.updateRocket(); this.tail.update(); this.rings.forEach(r => r.update()); if (this.exploded && this.tail.isDead && this.rings.every(r => r.isDead)) this.isDead = true; } }
+        class MultiColorClusterBurst extends BaseRocket { constructor() { super(); this.bomblets = new ParticleSystem(crispTexture, 20); this.secondaryExplosions = []; } explode() { for (let i = 0; i < 10; i++) { const v = new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(0.5, 0.8)); this.bomblets.add(new Particle({ position: this.rocket.position.clone(), velocity: v, color: new THREE.Color(1, 0.8, 0.4), size: rand(6, 8), lifetime: rand(40, 50) })); } } update() { this.updateRocket(); const traveling = []; for(const p of this.bomblets.particles) { if(p.age > p.lifetime * 0.8 && !p.exploded) { p.exploded = true; const secondarySys = new ParticleSystem(crispTexture, 100); for (let i = 0; i < 50; i++) { const v = new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(0.3, 0.6)); const c = new THREE.Color().setHSL(Math.random(), 1, 0.7); secondarySys.add(new Particle({ position: p.position.clone(), velocity: v, color: c, size: rand(4, 6), lifetime: rand(50, 70) })); } this.secondaryExplosions.push(secondarySys); } if(!p.exploded) traveling.push(p); } this.bomblets.particles = traveling; this.tail.update(); this.bomblets.update(); this.secondaryExplosions.forEach(sys => sys.update()); this.secondaryExplosions = this.secondaryExplosions.filter(sys => !sys.isDead); if(this.exploded && this.tail.isDead && this.bomblets.isDead && this.secondaryExplosions.length === 0) this.isDead = true; } }
+        class SparklerFountain { constructor() { this.system = new ParticleSystem(softTexture, 1000); this.mainParticles = []; this.origin = new THREE.Vector3(rand(-50, 50), -25, rand(-50, 50)); this.lifetime = 250; this.age = 0; this.isDead = false; } update() { this.age++; if (this.age < this.lifetime) { if (this.age % 2 === 0) { for (let i = 0; i < 3; i++) { const v = new THREE.Vector3(rand(-1, 1), rand(0.5, 1.5), rand(-1, 1)).normalize().multiplyScalar(rand(0.7, 1.2)); const p = new Particle({ position: this.origin.clone(), velocity: v, color: new THREE.Color(1, 0.8, 0.4), size: rand(8, 10), lifetime: rand(80, 120), emitsTrail: true }); this.mainParticles.push(p); this.system.add(p); } } } this.mainParticles = this.mainParticles.filter(p => { if (p.update()) { this.system.add(new Particle({ position: p.position.clone(), velocity: new THREE.Vector3(rand(-0.05, 0.05), rand(-0.05, 0.05), rand(-0.05, 0.05)), color: new THREE.Color(1, 0.6, 0.2), size: rand(2, 4), lifetime: rand(15, 30) })); return true; } return false; }); this.system.update(); if (this.age >= this.lifetime && this.system.isDead && this.mainParticles.length === 0) this.isDead = true; } }
+        class GroundSpinner { constructor() { this.system = new ParticleSystem(crispTexture, 500); this.origin = new THREE.Vector3(rand(-50, 50), -24.5, rand(-50, 50)); this.angle = 0; this.radius = 0.2; this.rotationSpeed = rand(0.1, 0.2); this.lifetime = 250; this.age = 0; this.isDead = false; } update() { this.age++; if (this.age < this.lifetime) { this.angle += this.rotationSpeed * timeScale; this.radius += 0.01 * timeScale; for (let i = 0; i < 2; i++){ const v = new THREE.Vector3(Math.cos(this.angle) * 0.2, rand(0.01, 0.05), Math.sin(this.angle) * 0.2); const pos = this.origin.clone().add(new THREE.Vector3(Math.sin(this.angle) * this.radius, 0, -Math.cos(this.angle) * this.radius)); this.system.add(new Particle({position: pos, velocity: v, color: new THREE.Color(0.2, 1, 0.2), size: rand(5, 8), lifetime: rand(50, 80)})); } } this.system.update(); if (this.age >= this.lifetime && this.system.isDead) this.isDead = true; } }
+
+        // ====================================================================
+        // 3. UI, 3D TEXT, & RECORDING
+        // ====================================================================
+        let defaultFont = null, customFont = null;
+
+        function setGlobalBlending(blendingMode) { allEffects.forEach(effect => { for (const key in effect) { if (effect[key] instanceof ParticleSystem) effect[key].material.blending = blendingMode; if (Array.isArray(effect[key])) { effect[key].forEach(sys => { if (sys instanceof ParticleSystem) sys.material.blending = blendingMode; }); } } }); if (textMesh) textMesh.material.blending = blendingMode; }
+        const blendingToggle = document.getElementById('blendingToggle');
+        blendingToggle.addEventListener('change', (e) => setGlobalBlending(e.target.checked ? THREE.AdditiveBlending : THREE.NormalBlending));
+        
+        let launchInterval;
+        function resetLaunchInterval() {
+            if (launchInterval) clearInterval(launchInterval);
+            const delay = Math.max(16, Math.round(250 / timeScale));
+            launchInterval = setInterval(launchNewEffect, delay);
+        }
+        const timeScaleSlider = document.getElementById('timeScale');
+        timeScaleSlider.addEventListener('input', (e) => { timeScale = parseFloat(e.target.value); document.getElementById('timeScaleValue').textContent = e.target.value; resetLaunchInterval(); });
+        
+        const blurAmountSlider = document.getElementById('blurAmount');
+        blurAmountSlider.addEventListener('input', (e) => { blurAmount = parseFloat(e.target.value); document.getElementById('blurAmountValue').textContent = e.target.value; });
+
+        const useCustomFontCheckbox = document.getElementById('useCustomFont');
+        useCustomFontCheckbox.disabled = true;
+        useCustomFontCheckbox.addEventListener('change', () => { if (messageShown) show3DMessage(); });
+
+        const stereoToggle = document.getElementById('stereoToggle'), swapEyesBtn = document.getElementById('swapEyesBtn'), fovSlider = document.getElementById('fov'), eyeDistSlider = document.getElementById('eyeDist'), focalDistSlider = document.getElementById('focalDist'), maxFireworksSlider = document.getElementById('maxFireworks'); const updateSliderValue = (id, value) => document.getElementById(id).textContent = value; stereoToggle.addEventListener('change', (e) => { isStereoEnabled = e.target.checked; swapEyesBtn.disabled = !isStereoEnabled; updateCanvasSize(VIEW_WIDTH, VIEW_HEIGHT); }); swapEyesBtn.addEventListener('click', () => { swapEyes = !swapEyes; }); fovSlider.addEventListener('input', (e) => { camera.fov = parseFloat(e.target.value); camera.updateProjectionMatrix(); updateSliderValue('fovValue', e.target.value); }); eyeDistSlider.addEventListener('input', (e) => { stereoCamera.eyeSep = parseFloat(e.target.value); updateSliderValue('eyeDistValue', e.target.value); }); focalDistSlider.addEventListener('input', (e) => { camera.focus = parseFloat(e.target.value); camera.updateProjectionMatrix(); updateSliderValue('focalDistValue', e.target.value); }); maxFireworksSlider.addEventListener('input', (e) => { maxFireworks = parseInt(e.target.value, 10); updateSliderValue('maxFireworksValue', e.target.value); }); const canvasWidthInput = document.getElementById('canvasWidth'), canvasHeightInput = document.getElementById('canvasHeight'), updateCanvasBtn = document.getElementById('updateCanvasBtn'); updateCanvasBtn.addEventListener('click', () => { const newWidth = parseInt(canvasWidthInput.value, 10); const newHeight = parseInt(canvasHeightInput.value, 10); if (newWidth > 0 && newHeight > 0) { VIEW_WIDTH = newWidth; VIEW_HEIGHT = newHeight; updateCanvasSize(VIEW_WIDTH, VIEW_HEIGHT); } }); function updateCanvasSize(width, height) { const renderWidth = isStereoEnabled ? width * 2 : width; renderer.setSize(renderWidth, height); camera.aspect = width / height; camera.updateProjectionMatrix(); } 
+        
+        const fontLoader = new FontLoader();
+        let textMaterial;
+        
+        // Load default English font
+        fontLoader.load('https://unpkg.com/three@0.160.0/examples/fonts/helvetiker_bold.typeface.json', (loadedFont) => {
+            defaultFont = loadedFont;
+            setTimeout(show3DMessage, 15000);
+        });
+
+        // Try to load custom font
+        fontLoader.load('FavLang.json', 
+            (loadedFont) => { // onSuccess
+                console.log("Custom font 'FavLang.json' loaded.");
+                customFont = loadedFont;
+                useCustomFontCheckbox.disabled = false;
+            },
+            undefined, // onProgress
+            (error) => { // onError
+                console.log("Custom font 'FavLang.json' not found. Only default English font will be available.");
+            }
+        );
+
+        function show3DMessage() {
+            if (!messageShown) messageShown = true;
+            if (textMesh) scene.remove(textMesh);
+
+            const useCustom = useCustomFontCheckbox.checked;
+            const fontToUse = (useCustom && customFont) ? customFont : defaultFont;
+
+            if (!fontToUse) return; // Wait until a font is loaded
+
+            textMaterial = new THREE.MeshStandardMaterial({
+                color: 0xFFD700, metalness: 0.9, roughness: 0.2,
+            });
+
+            const textGeometry = new TextGeometry(document.getElementById('diwaliMessage').value, { font: fontToUse, size: 8, height: 1.5, curveSegments: 12 });
+            textGeometry.computeBoundingBox();
+            textGeometry.translate(-0.5 * (textGeometry.boundingBox.max.x - textGeometry.boundingBox.min.x), 0, 0);
+            textMesh = new THREE.Mesh(textGeometry, textMaterial);
+            scene.add(textMesh);
+        }
+        
+        const startRecordBtn = document.getElementById('startRecordBtn'), stopRecordBtn = document.getElementById('stopRecordBtn'); let mediaRecorder, recordedChunks = []; let isRecording = false;
+        const stopRecording = () => { if (!isRecording || !mediaRecorder) return; mediaRecorder.stop(); };
+        const startRecording = () => { if (isRecording) return; if (typeof renderer.domElement.captureStream !== 'function' || typeof MediaRecorder === 'undefined') { alert('Video recording is not supported in this browser.'); return; } const stream = renderer.domElement.captureStream(60); const preferredTypes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']; const mimeType = preferredTypes.find(type => MediaRecorder.isTypeSupported(type)); if (!mimeType) { alert('No suitable WebM recording format is supported in this browser.'); return; } console.log(`Using supported recording format: ${mimeType}`); mediaRecorder = new MediaRecorder(stream, { mimeType }); recordedChunks = []; mediaRecorder.ondataavailable = (event) => { if (event.data && event.data.size > 0) { recordedChunks.push(event.data); } }; mediaRecorder.onstop = () => { const blob = new Blob(recordedChunks, { type: mimeType }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'diwali-fireworks-recording.webm'; a.click(); URL.revokeObjectURL(url); recordedChunks = []; isRecording = false; startRecordBtn.disabled = false; stopRecordBtn.disabled = true; }; mediaRecorder.start(); isRecording = true; startRecordBtn.disabled = true; stopRecordBtn.disabled = false; };
+        startRecordBtn.addEventListener('click', startRecording);
+        stopRecordBtn.addEventListener('click', stopRecording);
+
+        // ====================================================================
+        // 5. MAIN LOOP
+        // ====================================================================
+        function launchNewEffect() {
+            if (allEffects.length >= maxFireworks) return;
+            const effectTypes = [ RocketBurst, SparklerFountain, GroundSpinner, MultiColorClusterBurst, RocketBurst, MultiColorBurst, RingBurst, GroundSpinner, SparklerFountain ];
+            const RandomEffect = effectTypes[Math.floor(Math.random() * effectTypes.length)];
+            allEffects.push(new RandomEffect());
+        }
+        function init() {
+            updateCanvasSize(parseInt(canvasWidthInput.value, 10), parseInt(canvasHeightInput.value, 10));
+            fovSlider.dispatchEvent(new Event('input')); eyeDistSlider.dispatchEvent(new Event('input')); focalDistSlider.dispatchEvent(new Event('input'));
+            maxFireworksSlider.dispatchEvent(new Event('input')); timeScaleSlider.dispatchEvent(new Event('input'));
+            blurAmountSlider.dispatchEvent(new Event('input'));
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            allEffects.forEach(e => e.update());
+            allEffects = allEffects.filter(e => !e.isDead);
+            
+            if (textMesh) {
+                const time = Date.now() * 0.0005;
+                textMesh.position.y = 10 + Math.sin(time * 0.7) * 1.5;
+                textMesh.rotation.y = Math.sin(time * 0.3) * 0.15;
+                textMesh.rotation.z = Math.sin(time * 0.2) * 0.1;
+            }
+
+            if (isStereoEnabled) { stereoCamera.update(camera); renderer.setScissorTest(true); renderer.setScissor(0, 0, VIEW_WIDTH, VIEW_HEIGHT); renderer.setViewport(0, 0, VIEW_WIDTH, VIEW_HEIGHT); renderer.render(scene, swapEyes ? stereoCamera.cameraR : stereoCamera.cameraL); renderer.setScissor(VIEW_WIDTH, 0, VIEW_WIDTH, VIEW_HEIGHT); renderer.setViewport(VIEW_WIDTH, 0, VIEW_WIDTH, VIEW_HEIGHT); renderer.render(scene, swapEyes ? stereoCamera.cameraL : stereoCamera.cameraR); renderer.setScissorTest(false); } else { renderer.render(scene, camera); }
+        }
+        init();
+    </script>
+</body>
+</html>
